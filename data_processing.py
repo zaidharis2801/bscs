@@ -488,6 +488,7 @@ def build_analysis_dataset(
     uifsm_path: Optional[str] = None,
     cbm_path: Optional[str] = None,
     performance_path: Optional[str] = None,
+    hpi_path: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     High-level pipeline.
@@ -499,6 +500,7 @@ def build_analysis_dataset(
     - eal_percent, ethnicity proportions
     - pct_male, pct_female
     - uifsm_percent_total
+    - avg_house_price (from UK HPI, region-year level)
     - performance outcomes (if provided)
     """
     school_char = clean_spc_school_characteristics(school_char_path)
@@ -510,8 +512,8 @@ def build_analysis_dataset(
 
     uifsm = clean_spc_uifsm(uifsm_path) if uifsm_path is not None else None
     _ = clean_spc_cbm(cbm_path) if cbm_path is not None else None  # loaded but not merged
-
     perf = clean_performance_data(performance_path) if performance_path is not None else None
+    hpi = clean_uk_hpi(hpi_path) if hpi_path is not None else None
 
     merged = school_char.copy()
     merged = _safe_left_merge(merged, fsm)
@@ -521,6 +523,7 @@ def build_analysis_dataset(
     merged = _safe_left_merge(merged, eth_lang)
     merged = _safe_left_merge(merged, uifsm)
     merged = _safe_left_merge(merged, perf)
+    merged = _safe_left_merge(merged, hpi)   # <-- add house prices (region-year level)
 
     # If disadvantaged_percent not set, fall back to fsm6_percent or fsm_percent
     if "disadvantaged_percent" not in merged.columns:
