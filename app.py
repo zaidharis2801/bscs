@@ -25,24 +25,19 @@ def load_excel(path: Path) -> pd.DataFrame:
     return pd.read_excel(path)
 
 
-# -------------------------------------------------------------------
-# Helper for safe filters
-# -------------------------------------------------------------------
 def multiselect_filter(df, col, selected):
     if not selected or "All" in selected:
         return df
     return df[df[col].isin(selected)]
 
 
-# -------------------------------------------------------------------
-# App layout
-# -------------------------------------------------------------------
 st.title("Entrant & Subject Visualisations Dashboard")
 
 st.markdown(
     """
 This dashboard reads the pre-cleaned analysis files and produces visualisations.
-The tabs below cover:
+
+Tabs:
 
 - **Count by Occupation** (socio-economic classification, parental education, IMD)
 - **Count by Level of Qualification** (time series of entrants by level)
@@ -52,7 +47,7 @@ The tabs below cover:
 """
 )
 
-# Load data up front (with basic error handling)
+# Load data
 dfs = {}
 for name, path in DATASETS.items():
     try:
@@ -79,14 +74,16 @@ with tab_occ:
     if df is None:
         st.error("Could not load **Count by Occupation.xlsx**.")
     else:
-        # Sidebar-like filters within the tab
         with st.expander("Filters", expanded=True):
             col1, col2, col3 = st.columns(3)
             col4, col5 = st.columns(2)
 
             cat_marker_vals = sorted(df["Category Marker"].dropna().unique())
             cat_marker = col1.multiselect(
-                "Category marker", options=cat_marker_vals, default=cat_marker_vals
+                "Category marker",
+                options=cat_marker_vals,
+                default=cat_marker_vals,
+                key="occ_cat_marker",
             )
 
             he_country_vals = sorted(df["Country of HE provider"].dropna().unique())
@@ -94,6 +91,7 @@ with tab_occ:
                 "Country of HE provider",
                 options=he_country_vals,
                 default=["England"],
+                key="occ_country_he",
             )
 
             entrant_vals = sorted(df["Entrant marker"].dropna().unique())
@@ -101,6 +99,7 @@ with tab_occ:
                 "Entrant marker",
                 options=entrant_vals,
                 default=["All"],
+                key="occ_entrant_marker",
             )
 
             level_vals = sorted(df["Level of study"].dropna().unique())
@@ -108,11 +107,15 @@ with tab_occ:
                 "Level of study",
                 options=level_vals,
                 default=["All", "First degree"],
+                key="occ_level_study",
             )
 
             year_vals = sorted(df["Academic Year"].dropna().unique())
             years = col5.multiselect(
-                "Academic Year", options=year_vals, default=year_vals
+                "Academic Year",
+                options=year_vals,
+                default=year_vals,
+                key="occ_academic_year",
             )
 
         df_f = df.copy()
@@ -123,7 +126,13 @@ with tab_occ:
         if years:
             df_f = df_f[df_f["Academic Year"].isin(years)]
 
-        metric = st.radio("Metric", ["Number", "Percentage"], horizontal=True)
+        metric = st.radio(
+            "Metric",
+            ["Number", "Percentage"],
+            horizontal=True,
+            key="occ_metric",
+        )
+
         if metric == "Percentage":
             df_f = df_f.dropna(subset=["Percentage"])
 
@@ -133,12 +142,12 @@ with tab_occ:
             "View",
             ["By Category (latest year)", "Trend over time (by category)"],
             horizontal=True,
+            key="occ_view_type",
         )
 
         if df_f.empty:
             st.warning("No data after filters – adjust filters to see charts.")
         else:
-            # Aggregate
             metric_col = metric
             agg = (
                 df_f.groupby(["Academic Year", "Category"], as_index=False)[metric_col]
@@ -155,8 +164,7 @@ with tab_occ:
                     data=latest.set_index("Category")[metric_col],
                     use_container_width=True,
                 )
-
-            else:  # Trend over time
+            else:
                 pivot = agg.pivot(
                     index="Academic Year", columns="Category", values=metric_col
                 ).sort_index()
@@ -183,11 +191,15 @@ with tab_level:
                 "Level of qualification",
                 options=level_vals,
                 default=[lv for lv in level_vals if lv != "Total"] or level_vals,
+                key="level_level_qual",
             )
 
             year_vals = sorted(df["Academic year"].dropna().unique())
             years = col2.multiselect(
-                "Academic year", options=year_vals, default=year_vals
+                "Academic year",
+                options=year_vals,
+                default=year_vals,
+                key="level_academic_year",
             )
 
         df_f = df.copy()
@@ -200,7 +212,6 @@ with tab_level:
         else:
             st.markdown("### Time series of entrants by level of qualification")
 
-            # Pivot for time series: index = year, columns = level, values = Number
             pivot = (
                 df_f.pivot(
                     index="Academic year",
@@ -247,6 +258,7 @@ with tab_hecos:
                 "CAH level marker",
                 options=cah_marker_vals,
                 default=cah_marker_vals,
+                key="hecos_cah_marker",
             )
 
             entrant_vals = sorted(df["Entrant marker"].dropna().unique())
@@ -254,6 +266,7 @@ with tab_hecos:
                 "Entrant marker",
                 options=entrant_vals,
                 default=["Entrant", "All"],
+                key="hecos_entrant_marker",
             )
 
             level_vals = sorted(df["Level of study"].dropna().unique())
@@ -261,16 +274,23 @@ with tab_hecos:
                 "Level of study",
                 options=level_vals,
                 default=["All", "First degree"],
+                key="hecos_level_study",
             )
 
             mode_vals = sorted(df["Mode of study"].dropna().unique())
             mode_of_study = col4.multiselect(
-                "Mode of study", options=mode_vals, default=["All", "Full-time"]
+                "Mode of study",
+                options=mode_vals,
+                default=["All", "Full-time"],
+                key="hecos_mode_study",
             )
 
             year_vals = sorted(df["Academic Year"].dropna().unique())
             years = col5.multiselect(
-                "Academic Year", options=year_vals, default=year_vals
+                "Academic Year",
+                options=year_vals,
+                default=year_vals,
+                key="hecos_academic_year",
             )
 
         df_f = df.copy()
@@ -296,8 +316,13 @@ with tab_hecos:
 
             st.caption(f"Latest year in filtered data: **{latest_year}**")
 
-            # Limit to top N for readability
-            top_n = st.slider("Top N subjects", min_value=5, max_value=40, value=20)
+            top_n = st.slider(
+                "Top N subjects",
+                min_value=5,
+                max_value=40,
+                value=20,
+                key="hecos_top_n_subjects",
+            )
             latest_top = latest.head(top_n)
 
             st.bar_chart(
@@ -307,7 +332,9 @@ with tab_hecos:
 
             st.markdown("### Trend for a selected subject over time")
             subject_sel = st.selectbox(
-                "Subject", options=sorted(df_f["CAH level subject"].unique())
+                "Subject",
+                options=sorted(df_f["CAH level subject"].unique()),
+                key="hecos_subject_select",
             )
 
             subj_ts = (
@@ -337,11 +364,13 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
     )
 
     uploaded = st.file_uploader(
-        "Upload CSV or Excel", type=["csv", "xlsx", "xls"], accept_multiple_files=False
+        "Upload CSV or Excel",
+        type=["csv", "xlsx", "xls"],
+        accept_multiple_files=False,
+        key="custom_file_uploader",
     )
 
     if uploaded is not None:
-        # Auto-detect format
         if uploaded.name.lower().endswith(".csv"):
             df_custom = pd.read_csv(uploaded)
         else:
@@ -352,7 +381,6 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
 
         numeric_cols = df_custom.select_dtypes(include="number").columns.tolist()
         all_cols = df_custom.columns.tolist()
-        non_numeric_cols = [c for c in all_cols if c not in numeric_cols]
 
         if not numeric_cols:
             st.warning("No numeric columns found – need at least one for Y-axis.")
@@ -364,23 +392,29 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
                 "X-axis",
                 options=all_cols,
                 index=0,
+                key="custom_x_axis",
             )
             y_col = col2.selectbox(
                 "Y-axis (numeric)",
                 options=numeric_cols,
                 index=0,
+                key="custom_y_axis",
             )
             chart_type = col3.selectbox(
-                "Chart type", options=["Bar", "Line", "Scatter"], index=0
+                "Chart type",
+                options=["Bar", "Line", "Scatter"],
+                index=0,
+                key="custom_chart_type",
             )
 
-            # Optional group-by for aggregation
             group = st.checkbox(
-                "Aggregate by X (sum of Y)", value=True, help="Useful for bar/line charts."
+                "Aggregate by X (sum of Y)",
+                value=True,
+                help="Useful for bar/line charts.",
+                key="custom_group_checkbox",
             )
 
             df_plot = df_custom.copy()
-
             if group:
                 df_plot = (
                     df_plot.groupby(x_col, as_index=False)[y_col]
@@ -400,8 +434,7 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
                     df_plot.set_index(x_col)[y_col],
                     use_container_width=True,
                 )
-            else:  # Scatter
-                # For scatter we’ll use st.pyplot via pandas plot
+            else:
                 import matplotlib.pyplot as plt
 
                 fig, ax = plt.subplots()
@@ -411,6 +444,5 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
                 ax.set_title(f"{y_col} vs {x_col}")
                 plt.xticks(rotation=45, ha="right")
                 st.pyplot(fig, use_container_width=True)
-
     else:
         st.info("Upload a CSV/Excel file to start building custom visualisations.")
