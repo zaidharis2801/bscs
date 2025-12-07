@@ -436,6 +436,48 @@ def _safe_left_merge(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:
     return left.merge(right, on=keys, how="left")
 
 
+def clean_uk_hpi(path: str) -> pd.DataFrame:
+    """
+    Clean UK House Price Index (UK-HPI-cleaned.csv) and aggregate to
+    region-year level.
+
+    Assumes columns (before standardise_columns):
+    - Date: monthly dates (e.g. 1/1/2018)
+    - RegionName: English regions (e.g. 'East Midlands')
+    - AreaCode: region code (e.g. 'E12000004')
+    - AveragePrice: average price for that region & month
+
+    Output:
+    - year
+    - region_code
+    - region_name
+    - avg_house_price  (mean annual price)
+    """
+    df = pd.read_csv(path)
+    df = standardise_columns(df)  # -> date, regionname, areacode, averageprice, ...
+
+    # Parse date and keep year
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+
+    # Standardise names to match SPC region columns
+    df = df.rename(
+        columns={
+            "regionname": "region_name",
+            "areacode": "region_code",
+            "averageprice": "avg_house_price",
+        }
+    )
+
+    group_cols = [c for c in ["year", "region_code", "region_name"] if c in df.columns]
+
+    hpi = (
+        df.groupby(group_cols, as_index=False)
+          .agg(avg_house_price=("avg_house_price", "mean"))
+    )
+
+    return hpi
+
 def build_analysis_dataset(
     fsm_path: str,
     fsm6_path: str,
