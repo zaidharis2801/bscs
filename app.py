@@ -407,7 +407,7 @@ else:
 header_col, chips_col = st.columns([3, 2])
 
 with header_col:
-    st.title("School Performance Explorer (Mockup-aligned)")
+    st.title("School Performance Explorer - England")
     st.caption(
         "Interactive concept for analysing GCSE and A-level outcomes in England by "
         "socioeconomic context, school type and inspection outcomes. "
