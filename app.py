@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 
 st.set_page_config(
-    page_title="School Performance – Entrant & Subject Visualisations",
+    page_title="Higher Education Entrant & Subject Visualisations – England",
     layout="wide",
 )
 
@@ -31,19 +31,26 @@ def multiselect_filter(df, col, selected):
     return df[df[col].isin(selected)]
 
 
-st.title("Entrant & Subject Visualisations Dashboard")
+# -------------------------------------------------------------------
+# PAGE TITLE & INTRO
+# -------------------------------------------------------------------
+st.title("Higher Education Entrant & Subject Visualisations (England)")
 
 st.markdown(
     """
-This dashboard reads the pre-cleaned analysis files and produces visualisations.
+This dashboard provides exploratory visualisations of **entrants to higher education in England**, 
+based on the pre-cleaned analysis files. It is intended to support the thesis questions on how 
+**socio-economic factors, deprivation and subject mix** relate to higher education participation.
 
 Tabs:
 
-- **Count by Occupation** (socio-economic classification, parental education, IMD)
-- **Count by Level of Qualification** (time series of entrants by level)
-- **HECoS Subject Data** (subject-level entrants by CAH grouping)
-- **Custom visualisations file** – upload any CSV/Excel (e.g. `visualizations.csv`)
-  and build your own charts.
+- **Count by Occupation** – entrants by socio-economic category, with filters for level of study, entrant marker and year.
+- **Count by Level of Qualification** – time series of entrants by level (e.g. first degree vs other).
+- **HECoS / CAH Subject Data** – entrants by subject area using HECoS codes aggregated to CAH subject groups.
+- **Custom visualisations file** – upload a pre-aggregated file (for example, `visualisations.csv`) 
+  from your regression script and build your own charts.
+
+All data here are **aggregated** and restricted to **higher education providers in England**.
 """
 )
 
@@ -70,43 +77,67 @@ tab_occ, tab_level, tab_hecos, tab_custom = st.tabs(
 with tab_occ:
     st.header("Count by Occupation (socio-economic classification, IMD, etc.)")
 
+    st.markdown(
+        """
+This tab shows **entrants to higher education in England** by occupation-related and other 
+socio-economic characteristics.
+
+Key points:
+
+- **Country of HE provider** is restricted to **England** in this dashboard.
+- **Entrant marker** distinguishes **new entrants** from other records (e.g. continuing students).
+- The **“% by category (latest year)”** view shows the **share of entrants** in each response 
+  category for the most recent academic year in the filtered data (e.g. *Yes*, *No*, *Don't know*).
+"""
+    )
+
     df = dfs.get("Count by Occupation")
     if df is None:
         st.error("Could not load **Count by Occupation.xlsx**.")
     else:
+        # Restrict to England only for HE provider
+        if "Country of HE provider" in df.columns:
+            df = df[df["Country of HE provider"] == "England"].copy()
+            # Keep the column but fix its value so we can describe it in the UI if needed
+            df["Country of HE provider"] = "England"
+
         with st.expander("Filters", expanded=True):
             col1, col2, col3 = st.columns(3)
             col4, col5 = st.columns(2)
 
+            # Category marker (e.g. type of characteristic)
             cat_marker_vals = sorted(df["Category Marker"].dropna().unique())
             cat_marker = col1.multiselect(
                 "Category marker",
                 options=cat_marker_vals,
                 default=cat_marker_vals,
                 key="occ_cat_marker",
+                help="Select which characteristic or grouping is shown (e.g. socio-economic category).",
             )
 
-            he_country_vals = sorted(df["Country of HE provider"].dropna().unique())
-            he_country = col2.multiselect(
-                "Country of HE provider",
-                options=he_country_vals,
-                default=["England"],
-                key="occ_country_he",
+            # Country is fixed to England – show as non-editable information
+            col2.markdown(
+                """
+**Country of HE provider**
+
+This dashboard only includes providers in **England**.
+"""
             )
 
             entrant_vals = sorted(df["Entrant marker"].dropna().unique())
             entrant_marker = col3.multiselect(
                 "Entrant marker",
                 options=entrant_vals,
-                default=["All"],
+                default=["Entrant", "All"] if "Entrant" in entrant_vals else entrant_vals,
                 key="occ_entrant_marker",
+                help="‘Entrant’ usually refers to new entrants in that academic year; ‘All’ may include other records.",
             )
 
             level_vals = sorted(df["Level of study"].dropna().unique())
             level_of_study = col4.multiselect(
                 "Level of study",
                 options=level_vals,
-                default=["All", "First degree"],
+                default=[lv for lv in level_vals if lv in ["All", "First degree"]] or level_vals,
                 key="occ_level_study",
             )
 
@@ -120,7 +151,6 @@ with tab_occ:
 
         df_f = df.copy()
         df_f = multiselect_filter(df_f, "Category Marker", cat_marker)
-        df_f = multiselect_filter(df_f, "Country of HE provider", he_country)
         df_f = multiselect_filter(df_f, "Entrant marker", entrant_marker)
         df_f = multiselect_filter(df_f, "Level of study", level_of_study)
         if years:
@@ -131,6 +161,7 @@ with tab_occ:
             ["Number", "Percentage"],
             horizontal=True,
             key="occ_metric",
+            help="Switch between absolute counts and percentage share of entrants within each category.",
         )
 
         if metric == "Percentage":
@@ -140,35 +171,61 @@ with tab_occ:
 
         view_type = st.radio(
             "View",
-            ["By Category (latest year)", "Trend over time (by category)"],
+            ["% by category (latest year)", "Trend over time (by category)"],
             horizontal=True,
             key="occ_view_type",
+            help="‘% by category (latest year)’ focuses on the latest academic year; the trend view shows changes over time.",
         )
 
         if df_f.empty:
             st.warning("No data after filters – adjust filters to see charts.")
         else:
             metric_col = metric
+
+            # Group by academic year and specific response category
             agg = (
                 df_f.groupby(["Academic Year", "Category"], as_index=False)[metric_col]
                 .sum()
             )
 
-            if view_type == "By Category (latest year)":
+            if view_type == "% by category (latest year)":
                 latest_year = sorted(agg["Academic Year"].unique())[-1]
                 latest = agg[agg["Academic Year"] == latest_year]
                 latest = latest.sort_values(metric_col, ascending=False)
 
-                st.caption(f"Latest year in filtered data: **{latest_year}**")
+                # Rename columns for clearer axis labels
+                latest_display = latest.rename(
+                    columns={
+                        "Category": "Characteristic category (e.g. Yes/No/Don't know)",
+                        metric_col: "Value",
+                    }
+                )
+
+                st.caption(
+                    f"Latest academic year in filtered data: **{latest_year}** – "
+                    "values show the share or number of entrants in each response category."
+                )
                 st.bar_chart(
-                    data=latest.set_index("Category")[metric_col],
+                    data=latest_display.set_index("Characteristic category (e.g. Yes/No/Don't know)")["Value"],
                     use_container_width=True,
                 )
             else:
-                pivot = agg.pivot(
-                    index="Academic Year", columns="Category", values=metric_col
-                ).sort_index()
-                st.line_chart(pivot, use_container_width=True)
+                pivot = (
+                    agg.pivot(
+                        index="Academic Year",
+                        columns="Category",
+                        values=metric_col,
+                    )
+                    .sort_index()
+                )
+
+                pivot_display = pivot.copy()
+                pivot_display.index.name = "Academic Year"
+
+                st.caption(
+                    "Time series of the chosen metric by response category for the selected academic years."
+                )
+                st.line_chart(pivot_display, use_container_width=True)
 
         with st.expander("Raw data preview"):
             st.dataframe(df_f, use_container_width=True, height=300)
@@ -178,6 +235,18 @@ with tab_occ:
 # -------------------------------------------------------------------
 with tab_level:
     st.header("Count by Level of Qualification")
+
+    st.markdown(
+        """
+This tab shows entrants by **level of qualification** (for example, first degrees versus 
+other levels) over time.
+
+Typical use:
+
+- Assess how the mix of qualification levels has changed.
+- Compare first degrees to other routes in the most recent year.
+"""
+    )
 
     df = dfs.get("Count by Level of Qualification")
     if df is None:
@@ -220,6 +289,7 @@ with tab_level:
                 )
                 .sort_index()
             )
+            pivot.index.name = "Academic year"
 
             st.line_chart(pivot, use_container_width=True)
 
@@ -230,9 +300,19 @@ with tab_level:
             latest = latest.groupby("Level of qualification", as_index=False)["Number"].sum()
             latest = latest.sort_values("Number", ascending=False)
 
-            st.caption(f"Latest year in filtered data: **{latest_year}**")
+            latest_display = latest.rename(
+                columns={
+                    "Level of qualification": "Level of qualification",
+                    "Number": "Number of entrants",
+                }
+            )
+
+            st.caption(
+                f"Latest academic year in filtered data: **{latest_year}** – "
+                "showing the distribution of entrants by qualification level."
+            )
             st.bar_chart(
-                data=latest.set_index("Level of qualification")["Number"],
+                data=latest_display.set_index("Level of qualification")["Number of entrants"],
                 use_container_width=True,
             )
 
@@ -244,6 +324,18 @@ with tab_level:
 # -------------------------------------------------------------------
 with tab_hecos:
     st.header("HECoS / CAH subject data")
+
+    st.markdown(
+        """
+This tab focuses on **subject areas** using the **Higher Education Classification of Subjects (HECoS)** 
+and the **Common Aggregation Hierarchy (CAH)**:
+
+- **HECoS**: detailed subject codes used by higher education providers (replacing JACS).
+- **CAH**: groups HECoS codes into broader subject families (e.g. ‘Computing’, ‘Business’, ‘Psychology’).
+
+In the charts we show **subject names** (CAH level subjects) rather than numeric codes to keep labels readable.
+"""
+    )
 
     df = dfs.get("HECoS Data")
     if df is None:
@@ -259,21 +351,23 @@ with tab_hecos:
                 options=cah_marker_vals,
                 default=cah_marker_vals,
                 key="hecos_cah_marker",
+                help="Choose the CAH level (e.g. CAH1 / CAH2 / CAH3) for aggregation.",
             )
 
             entrant_vals = sorted(df["Entrant marker"].dropna().unique())
             entrant_marker = col2.multiselect(
                 "Entrant marker",
                 options=entrant_vals,
-                default=["Entrant", "All"],
+                default=["Entrant", "All"] if "Entrant" in entrant_vals else entrant_vals,
                 key="hecos_entrant_marker",
+                help="‘Entrant’ usually refers to new entrants in that academic year.",
             )
 
             level_vals = sorted(df["Level of study"].dropna().unique())
             level_of_study = col3.multiselect(
                 "Level of study",
                 options=level_vals,
-                default=["All", "First degree"],
+                default=[lv for lv in level_vals if lv in ["All", "First degree"]] or level_vals,
                 key="hecos_level_study",
             )
 
@@ -281,7 +375,7 @@ with tab_hecos:
             mode_of_study = col4.multiselect(
                 "Mode of study",
                 options=mode_vals,
-                default=["All", "Full-time"],
+                default=[mv for mv in mode_vals if mv in ["All", "Full-time"]] or mode_vals,
                 key="hecos_mode_study",
             )
 
@@ -304,7 +398,7 @@ with tab_hecos:
         if df_f.empty:
             st.warning("No data after filters – adjust filters to see charts.")
         else:
-            st.markdown("### Entrants by subject (latest year)")
+            st.markdown("### Entrants by CAH subject (latest year)")
 
             latest_year = sorted(df_f["Academic Year"].unique())[-1]
             latest = df_f[df_f["Academic Year"] == latest_year]
@@ -314,7 +408,17 @@ with tab_hecos:
                 .sort_values("Number", ascending=False)
             )
 
-            st.caption(f"Latest year in filtered data: **{latest_year}**")
+            latest_display = latest.rename(
+                columns={
+                    "CAH level subject": "Subject (CAH)",
+                    "Number": "Number of entrants",
+                }
+            )
+
+            st.caption(
+                f"Latest academic year in filtered data: **{latest_year}** – "
+                "showing the top subject groups by number of entrants."
+            )
 
             top_n = st.slider(
                 "Top N subjects",
@@ -323,17 +427,19 @@ with tab_hecos:
                 value=20,
                 key="hecos_top_n_subjects",
             )
-            latest_top = latest.head(top_n)
+            latest_top = latest_display.head(top_n)
 
             st.bar_chart(
-                latest_top.set_index("CAH level subject")["Number"],
+                latest_top.set_index("Subject (CAH)")["Number of entrants"],
                 use_container_width=True,
             )
 
             st.markdown("### Trend for a selected subject over time")
+
+            subject_options = sorted(df_f["CAH level subject"].dropna().unique())
             subject_sel = st.selectbox(
-                "Subject",
-                options=sorted(df_f["CAH level subject"].unique()),
+                "Subject (CAH level)",
+                options=subject_options,
                 key="hecos_subject_select",
             )
 
@@ -344,22 +450,28 @@ with tab_hecos:
                 .sort_values("Academic Year")
             )
 
-            subj_ts = subj_ts.set_index("Academic Year")
-            st.line_chart(subj_ts["Number"], use_container_width=True)
+            subj_ts_display = subj_ts.rename(
+                columns={"Academic Year": "Academic Year", "Number": "Number of entrants"}
+            ).set_index("Academic Year")
+
+            st.line_chart(subj_ts_display["Number of entrants"], use_container_width=True)
 
         with st.expander("Raw data preview"):
             st.dataframe(df_f, use_container_width=True, height=300)
 
 # -------------------------------------------------------------------
-# TAB 4 – Custom visualisations (e.g. visualizations.csv)
+# TAB 4 – Custom visualisations (e.g. visualisations.csv)
 # -------------------------------------------------------------------
 with tab_custom:
     st.header("Custom visualisations from another file")
 
     st.markdown(
         """
-Upload any **CSV** or **Excel** file (for example, your `visualizations.csv`
+Upload any **CSV** or **Excel** file (for example, your `visualisations.csv`
 that comes out of the regression script). Then choose the X/Y axes and chart type.
+
+This is designed to link the **regression outputs** from the school performance analysis 
+to a simple visual layer – for example, plotting contextual residuals or disadvantage gaps.
 """
     )
 
@@ -410,7 +522,7 @@ that comes out of the regression script). Then choose the X/Y axes and chart typ
             group = st.checkbox(
                 "Aggregate by X (sum of Y)",
                 value=True,
-                help="Useful for bar/line charts.",
+                help="Useful for bar/line charts – e.g. total entrants by region or residual band.",
                 key="custom_group_checkbox",
             )
 
