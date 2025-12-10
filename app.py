@@ -1,560 +1,809 @@
-# app.py
 import streamlit as st
 import pandas as pd
-from pathlib import Path
+import requests
+from io import StringIO, BytesIO
+
+# =========================================================
+# STREAMLIT CONFIG
+# =========================================================
 
 st.set_page_config(
-    page_title="Higher Education Entrant & Subject Visualisations – England",
+    page_title="School Performance Explorer – England",
     layout="wide",
 )
 
-# -------------------------------------------------------------------
-# Paths & data loading
-# -------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent
+# =========================================================
+# GOOGLE DRIVE HELPERS
+# =========================================================
 
-DATASETS = {
-    "Count by Occupation": BASE_DIR / "Count by Occupation.xlsx",
-    "Count by Level of Qualification": BASE_DIR / "Count by Level of Qualification.xlsx",
-    "HECoS Data": BASE_DIR / "HECoS Data.xlsx",
+def load_csv_from_gdrive(file_id: str) -> pd.DataFrame:
+    """
+    Download a CSV directly from Google Drive using its file ID.
+    The file must be shared as 'Anyone with the link – Viewer'.
+    """
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    data = resp.content.decode("utf-8")
+    return pd.read_csv(StringIO(data), low_memory=False)
+
+
+def load_excel_from_gdrive(file_id: str, engine: str = "openpyxl") -> pd.DataFrame:
+    """
+    Download an Excel file directly from Google Drive using its file ID.
+    """
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    return pd.read_excel(BytesIO(resp.content), engine=engine)
+
+
+# =========================================================
+# FILE IDS – REPLACE THE PLACEHOLDERS WITH YOUR REAL IDs
+# =========================================================
+# For each file in the shared folder:
+# 1. Open in browser
+# 2. Copy the ID between '/d/' and '/view?...'
+# 3. Paste into the corresponding entry below.
+
+FILEIDS = {
+    # CSV: 202425_rurality_and_idaci_of_region_provisional.csv
+    "rurality_idaci": {
+        "id": "PUT_RURALITY_FILE_ID_HERE",
+        "type": "csv",
+    },
+    # CSV: 202425_geography_by_school_types_provisional.csv
+    "geo_school_types": {
+        "id": "1R703u8VB2TDSPZaOXhRN2M5dDX4YdPoR",
+        "type": "csv",
+    },
+    # CSV: spc_pupils_fsm.csv
+    "fsm": {
+        "id": "1DPrbSj5mb3DcM2NyVMkeUvJB51Uyp4aj",
+        "type": "csv",
+    },
+    # CSV: 202324_performance_tables_schools_final.csv
+    "ks4": {
+        "id": "1m5Rm4vHFevaYZa_kyImoagOtF5rUcJUE",
+        "type": "csv",
+    },
+    # CSV: Management_information_-_state-funded_schools_-_all_inspections_-_year_to_date_published_by_31_Dec_2024.csv
+    "ofsted_mi": {
+        "id": "PUT_OFSTED_MI_FILE_ID_HERE",
+        "type": "csv",
+    },
 }
 
 
-@st.cache_data
-def load_excel(path: Path) -> pd.DataFrame:
-    return pd.read_excel(path)
-
-
-def multiselect_filter(df, col, selected):
-    if not selected or "All" in selected:
-        return df
-    return df[df[col].isin(selected)]
-
-
-# -------------------------------------------------------------------
-# PAGE TITLE & INTRO
-# -------------------------------------------------------------------
-st.title("Higher Education Entrant & Subject Visualisations (England)")
-
-st.markdown(
+def load_dataset(key: str) -> pd.DataFrame:
     """
-This dashboard provides exploratory visualisations of **entrants to higher education in England**, 
-based on the pre-cleaned analysis files. It is intended to support the thesis questions on how 
-**socio-economic factors, deprivation and subject mix** relate to higher education participation.
+    Wrapper that uses FILEIDS to load the right file from Drive.
+    """
+    meta = FILEIDS[key]
+    file_id = meta["id"]
+    ftype = meta["type"]
 
-Tabs:
+    if "PUT_" in file_id:
+        raise ValueError(
+            f"File ID for '{key}' has not been set. "
+            f"Edit FILEIDS in app.py and paste the correct Google Drive ID."
+        )
 
-- **Count by Occupation** – entrants by socio-economic category, with filters for level of study, entrant marker and year.
-- **Count by Level of Qualification** – time series of entrants by level (e.g. first degree vs other).
-- **HECoS / CAH Subject Data** – entrants by subject area using HECoS codes aggregated to CAH subject groups.
-- **Custom visualisations file** – upload a pre-aggregated file (for example, `visualisations.csv`) 
-  from your regression script and build your own charts.
+    if ftype == "csv":
+        return load_csv_from_gdrive(file_id)
+    else:
+        return load_excel_from_gdrive(file_id)
 
-All data here are **aggregated** and restricted to **higher education providers in England**.
-"""
+
+# =========================================================
+# UTILITY FUNCTIONS
+# =========================================================
+
+def closing_year(time_period: int) -> int:
+    """
+    Convert a DfE-style time_period (e.g. 202122, 202324) into the closing year (e.g. 2022, 2024).
+    Assumes the last two digits correspond to the final calendar year of the academic year.
+    """
+    s = str(int(time_period))
+    return 2000 + int(s[-2:])
+
+
+def format_percent(x: float) -> str:
+    if pd.isna(x):
+        return "–"
+    return f"{x:.0f}%"
+
+
+def format_1dp(x: float) -> str:
+    if pd.isna(x):
+        return "–"
+    return f"{x:.1f}"
+
+
+def format_2dp(x: float) -> str:
+    if pd.isna(x):
+        return "–"
+    return f"{x:.2f}"
+
+
+# =========================================================
+# LOAD DATA FROM GOOGLE DRIVE
+# =========================================================
+
+@st.cache_data
+def load_rurality():
+    df = load_dataset("rurality_idaci")
+    for col in [
+        "attainment8_sum",
+        "pupil_count",
+        "progress8_pupil_count",
+        "progress8_sum",
+        "school_count",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["year"] = df["time_period"].apply(closing_year)
+    df["idaci_band"] = df["idaci_decile"].fillna("Unknown")
+    return df
+
+
+@st.cache_data
+def load_geo():
+    df = load_dataset("geo_school_types")
+    for col in [
+        "attainment8_sum",
+        "pupil_count",
+        "progress8_pupil_count",
+        "progress8_sum",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["year"] = df["time_period"].apply(closing_year)
+    return df
+
+
+@st.cache_data
+def load_fsm_secondary():
+    df = load_dataset("fsm")
+    for col in ["percent_of_pupils", "headcount"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["year"] = df["time_period"].apply(closing_year)
+
+    # Restrict to state-funded secondary & FSM indicator used in performance tables
+    mask = (
+        (df["phase_type_grouping"] == "State-funded secondary")
+        & (
+            df["fsm"]
+            == "known to be eligible for free school meals (used for FSM in Performance Tables)"
+        )
+    )
+    df = df.loc[mask].copy()
+    return df
+
+
+@st.cache_data
+def load_ks4_with_ofsted():
+    ks4 = load_dataset("ks4")
+    ks4["year"] = ks4["time_period"].apply(closing_year)
+    ks4 = ks4[ks4["breakdown"] == "Total"].copy()
+    ks4["avg_att8"] = pd.to_numeric(ks4["avg_att8"], errors="coerce")
+    ks4["avg_p8score"] = pd.to_numeric(ks4["avg_p8score"], errors="coerce")
+    ks4["school_urn"] = pd.to_numeric(ks4["school_urn"], errors="coerce")
+
+    mi = load_dataset("ofsted_mi")
+    mi["URN"] = pd.to_numeric(mi["URN"], errors="coerce")
+
+    rating_map = {
+        1.0: "Outstanding",
+        2.0: "Good",
+        3.0: "Requires improvement",
+        4.0: "Inadequate",
+    }
+    mi["ofsted_rating"] = mi["Previous overall effectiveness"].map(rating_map)
+
+    merged = ks4.merge(
+        mi[["URN", "ofsted_rating", "Region", "Local authority"]],
+        left_on="school_urn",
+        right_on="URN",
+        how="left",
+    )
+    return merged
+
+
+# =========================================================
+# ACTUALLY LOAD THEM
+# =========================================================
+
+try:
+    rurality_df = load_rurality()
+    geo_df = load_geo()
+    fsm_df = load_fsm_secondary()
+    ks4_ofsted_df = load_ks4_with_ofsted()
+except Exception as e:
+    st.error(
+        f"Error loading data from Google Drive: {e}\n\n"
+        "Check that FILEIDS in app.py contain the correct file IDs, and that the files "
+        "are shared as 'Anyone with the link – Viewer'."
+    )
+    st.stop()
+
+# Restrict rurality to regional level for decile-based charts
+rurality_reg = rurality_df[rurality_df["geographic_level"] == "Regional"].copy()
+
+# =========================================================
+# SIDEBAR FILTERS (mockup-aligned)
+# =========================================================
+
+st.sidebar.title("Filters")
+
+years_available = sorted(rurality_reg["year"].dropna().unique())
+default_years = [y for y in years_available if y >= 2019]
+
+selected_years = st.sidebar.multiselect(
+    "Year (closing year)",
+    options=years_available,
+    default=default_years or years_available,
 )
 
-# Load data
-dfs = {}
-for name, path in DATASETS.items():
-    try:
-        dfs[name] = load_excel(path)
-    except Exception as e:
-        st.sidebar.error(f"Could not load {name}: {e}")
+regions = ["All regions"] + sorted(rurality_reg["region_name"].dropna().unique())
+selected_regions = st.sidebar.multiselect(
+    "Region",
+    options=regions,
+    default=["All regions"],
+)
 
-tab_occ, tab_level, tab_hecos, tab_custom = st.tabs(
+school_types = (
+    ["All types"]
+    + sorted(
+        geo_df.loc[geo_df["geographic_level"] == "Regional", "establishment_type_group"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+)
+selected_school_types = st.sidebar.multiselect(
+    "School type (establishment group)",
+    options=school_types,
+    default=["All types"],
+)
+
+rating_order = ["All ratings", "Outstanding", "Good", "Requires improvement", "Inadequate"]
+present_ratings = sorted(
+    ks4_ofsted_df["ofsted_rating"].dropna().unique().tolist(),
+    key=lambda x: rating_order.index(x) if x in rating_order else 99,
+)
+ofsted_options = ["All ratings"] + present_ratings
+selected_ofsted = st.sidebar.multiselect(
+    "Ofsted rating",
+    options=ofsted_options,
+    default=["All ratings"],
+)
+
+idaci_bands_all = [
+    "All bands",
+    "0-10%",
+    "10-20%",
+    "20-30%",
+    "30-40%",
+    "40-50%",
+    "50-60%",
+    "60-70%",
+    "70-80%",
+    "80-90%",
+    "90-100%",
+]
+selected_idaci_bands = st.sidebar.multiselect(
+    "IMD / IDACI band",
+    options=idaci_bands_all,
+    default=["All bands"],
+)
+
+st.sidebar.button("Run analysis")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("View options")
+primary_outcome = st.sidebar.selectbox(
+    "Primary outcome",
+    options=["Attainment 8", "Progress 8", "A-level average points (placeholder)"],
+    index=0,
+)
+split_by = st.sidebar.selectbox(
+    "Split by",
+    options=["IMD / IDACI band", "Region", "School type"],
+    index=0,
+)
+
+# =========================================================
+# FILTER HELPERS
+# =========================================================
+
+def filter_rurality():
+    df = rurality_reg.copy()
+    if selected_years:
+        df = df[df["year"].isin(selected_years)]
+    if selected_regions and "All regions" not in selected_regions:
+        df = df[df["region_name"].isin(selected_regions)]
+    if selected_idaci_bands and "All bands" not in selected_idaci_bands:
+        df = df[df["idaci_band"].isin(selected_idaci_bands)]
+    return df
+
+
+def filter_geo_regional():
+    df = geo_df[geo_df["geographic_level"] == "Regional"].copy()
+    if selected_years:
+        df = df[df["year"].isin(selected_years)]
+    if selected_regions and "All regions" not in selected_regions:
+        df = df[df["region_name"].isin(selected_regions)]
+    if selected_school_types and "All types" not in selected_school_types:
+        df = df[df["establishment_type_group"].isin(selected_school_types)]
+    return df
+
+
+def filter_fsm():
+    df = fsm_df.copy()
+    if selected_years:
+        df = df[df["year"].isin(selected_years)]
+    if selected_regions and "All regions" not in selected_regions:
+        df = df[df["region_name"].isin(selected_regions)]
+    return df
+
+
+def filter_ks4_ofsted():
+    df = ks4_ofsted_df.copy()
+    if selected_years:
+        df = df[df["year"].isin(selected_years)]
+    if selected_regions and "All regions" not in selected_regions:
+        df = df[df["Region"].isin(selected_regions)]
+    if selected_ofsted and "All ratings" not in selected_ofsted:
+        df = df[df["ofsted_rating"].isin(selected_ofsted)]
+    return df
+
+
+# =========================================================
+# KPI CALCULATIONS
+# =========================================================
+
+rur_f = filter_rurality()
+geo_f = filter_geo_regional()
+fsm_f = filter_fsm()
+
+if rur_f["pupil_count"].sum() > 0:
+    kpi_att8 = rur_f["attainment8_sum"].sum() / rur_f["pupil_count"].sum()
+else:
+    kpi_att8 = float("nan")
+
+if rur_f["progress8_pupil_count"].sum() > 0:
+    kpi_p8 = rur_f["progress8_sum"].sum() / rur_f["progress8_pupil_count"].sum()
+else:
+    kpi_p8 = float("nan")
+
+if not fsm_f.empty:
+    kpi_fsm = fsm_f["percent_of_pupils"].median()
+else:
+    kpi_fsm = float("nan")
+
+rur_hd = rur_f[rur_f["idaci_decile"] != "Total"].copy()
+if not rur_hd.empty and rur_hd["school_count"].notna().any():
+    rur_hd["school_count"] = pd.to_numeric(rur_hd["school_count"], errors="coerce")
+    high_bands = ["0-10%", "10-20%", "20-30%"]
+    num_hd = rur_hd[rur_hd["idaci_decile"].isin(high_bands)]["school_count"].sum()
+    den_hd = rur_hd["school_count"].sum()
+    kpi_high_depr = (num_hd / den_hd * 100) if den_hd else float("nan")
+else:
+    kpi_high_depr = float("nan")
+
+# =========================================================
+# HEADER (title + chips)
+# =========================================================
+
+header_col, chips_col = st.columns([3, 2])
+
+with header_col:
+    st.title("School Performance Explorer (Mockup-aligned)")
+    st.caption(
+        "Interactive concept for analysing GCSE and A-level outcomes in England by "
+        "socioeconomic context, school type and inspection outcomes. "
+        "Emphasis is on understanding patterns rather than ranking individual schools."
+    )
+
+with chips_col:
+    st.markdown(
+        """
+<div style="display:flex; justify-content:flex-end; gap:0.5rem; flex-wrap:wrap;">
+  <span style="background:#E6F4EA; color:#137333; padding:0.25rem 0.6rem; border-radius:999px; font-size:0.8rem;">
+    Public, anonymised data
+  </span>
+  <span style="background:#E8F0FE; color:#1967D2; padding:0.25rem 0.6rem; border-radius:999px; font-size:0.8rem;">
+    2018–2022
+  </span>
+  <span style="background:#FCE8E6; color:#C5221F; padding:0.25rem 0.6rem; border-radius:999px; font-size:0.8rem;">
+    GCSE &amp; A-level
+  </span>
+  <span style="background:#FFF7DB; color:#B06000; padding:0.25rem 0.6rem; border-radius:999px; font-size:0.8rem;">
+    IMD &amp; FSM context
+  </span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+st.markdown("---")
+
+# =========================================================
+# TABS
+# =========================================================
+
+tab_overview, tab_socio, tab_ofsted, tab_gap, tab_outliers = st.tabs(
     [
-        "Count by Occupation",
-        "Count by Level of Qualification",
-        "HECoS Subject Data",
-        "Custom visualisations file",
+        "Overview",
+        "Socioeconomic patterns",
+        "Ofsted & governance",
+        "Disadvantage gap",
+        "Contextual outliers",
     ]
 )
 
-# -------------------------------------------------------------------
-# TAB 1 – Count by Occupation
-# -------------------------------------------------------------------
-with tab_occ:
-    st.header("Count by Occupation (socio-economic classification, IMD, etc.)")
+# =========================================================
+# OVERVIEW TAB
+# =========================================================
 
-    st.markdown(
-        """
-This tab shows **entrants to higher education in England** by occupation-related and other 
-socio-economic characteristics.
+with tab_overview:
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
-Key points:
+    with kpi1:
+        st.markdown("**Average Attainment 8**")
+        st.markdown(f"<h2 style='margin:0'>{format_1dp(kpi_att8)}</h2>", unsafe_allow_html=True)
+        st.caption("Mean GCSE Attainment 8 score across selected filters.")
 
-- **Country of HE provider** is restricted to **England** in this dashboard.
-- **Entrant marker** distinguishes **new entrants** from other records (e.g. continuing students).
-- The **“% by category (latest year)”** view shows the **share of entrants** in each response 
-  category for the most recent academic year in the filtered data (e.g. *Yes*, *No*, *Don't know*).
-"""
-    )
+    with kpi2:
+        st.markdown("**Progress 8**")
+        st.markdown(f"<h2 style='margin:0'>{format_2dp(kpi_p8)}</h2>", unsafe_allow_html=True)
+        st.caption("Average Progress 8 relative to expected pupil trajectories.")
 
-    df = dfs.get("Count by Occupation")
-    if df is None:
-        st.error("Could not load **Count by Occupation.xlsx**.")
-    else:
-        # Restrict to England only for HE provider
-        if "Country of HE provider" in df.columns:
-            df = df[df["Country of HE provider"] == "England"].copy()
-            # Keep the column but fix its value so we can describe it in the UI if needed
-            df["Country of HE provider"] = "England"
+    with kpi3:
+        st.markdown("**FSM share (median)**")
+        st.markdown(f"<h2 style='margin:0'>{format_percent(kpi_fsm)}</h2>", unsafe_allow_html=True)
+        st.caption("Median proportion of pupils eligible for Free School Meals.")
 
-        with st.expander("Filters", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            col4, col5 = st.columns(2)
+    with kpi4:
+        st.markdown("**High-deprivation schools**")
+        st.markdown(f"<h2 style='margin:0'>{format_percent(kpi_high_depr)}</h2>", unsafe_allow_html=True)
+        st.caption("Share of schools located in the most deprived IDACI bands (0–30%).")
 
-            # Category marker (e.g. type of characteristic)
-            cat_marker_vals = sorted(df["Category Marker"].dropna().unique())
-            cat_marker = col1.multiselect(
-                "Category marker",
-                options=cat_marker_vals,
-                default=cat_marker_vals,
-                key="occ_cat_marker",
-                help="Select which characteristic or grouping is shown (e.g. socio-economic category).",
-            )
+    st.markdown("")
 
-            # Country is fixed to England – show as non-editable information
-            col2.markdown(
-                """
-**Country of HE provider**
+    top_left, top_right = st.columns(2)
 
-This dashboard only includes providers in **England**.
-"""
-            )
-
-            entrant_vals = sorted(df["Entrant marker"].dropna().unique())
-            entrant_marker = col3.multiselect(
-                "Entrant marker",
-                options=entrant_vals,
-                default=["Entrant", "All"] if "Entrant" in entrant_vals else entrant_vals,
-                key="occ_entrant_marker",
-                help="‘Entrant’ usually refers to new entrants in that academic year; ‘All’ may include other records.",
-            )
-
-            level_vals = sorted(df["Level of study"].dropna().unique())
-            level_of_study = col4.multiselect(
-                "Level of study",
-                options=level_vals,
-                default=[lv for lv in level_vals if lv in ["All", "First degree"]] or level_vals,
-                key="occ_level_study",
-            )
-
-            year_vals = sorted(df["Academic Year"].dropna().unique())
-            years = col5.multiselect(
-                "Academic Year",
-                options=year_vals,
-                default=year_vals,
-                key="occ_academic_year",
-            )
-
-        df_f = df.copy()
-        df_f = multiselect_filter(df_f, "Category Marker", cat_marker)
-        df_f = multiselect_filter(df_f, "Entrant marker", entrant_marker)
-        df_f = multiselect_filter(df_f, "Level of study", level_of_study)
-        if years:
-            df_f = df_f[df_f["Academic Year"].isin(years)]
-
-        metric = st.radio(
-            "Metric",
-            ["Number", "Percentage"],
-            horizontal=True,
-            key="occ_metric",
-            help="Switch between absolute counts and percentage share of entrants within each category.",
+    with top_left:
+        st.markdown("##### Attainment 8 by IMD / IDACI band")
+        st.caption(
+            "Mean Attainment 8 by IDACI band (0–10% most deprived to 90–100% least deprived), "
+            "with separate lines for each year."
         )
 
-        if metric == "Percentage":
-            df_f = df_f.dropna(subset=["Percentage"])
+        rur_chart = rur_f[
+            rur_f["idaci_decile"].isin(
+                [
+                    "0-10%",
+                    "10-20%",
+                    "20-30%",
+                    "30-40%",
+                    "40-50%",
+                    "50-60%",
+                    "60-70%",
+                    "70-80%",
+                    "80-90%",
+                    "90-100%",
+                ]
+            )
+        ].copy()
 
-        st.markdown("### Visualisations")
-
-        view_type = st.radio(
-            "View",
-            ["% by category (latest year)", "Trend over time (by category)"],
-            horizontal=True,
-            key="occ_view_type",
-            help="‘% by category (latest year)’ focuses on the latest academic year; the trend view shows changes over time.",
-        )
-
-        if df_f.empty:
-            st.warning("No data after filters – adjust filters to see charts.")
+        if rur_chart.empty:
+            st.info("No data for the selected filters.")
         else:
-            metric_col = metric
-
-            # Group by academic year and specific response category
-            agg = (
-                df_f.groupby(["Academic Year", "Category"], as_index=False)[metric_col]
-                .sum()
+            grouped = (
+                rur_chart.groupby(["year", "idaci_decile"], as_index=False)[
+                    ["attainment8_sum", "pupil_count"]
+                ].sum()
             )
-
-            if view_type == "% by category (latest year)":
-                latest_year = sorted(agg["Academic Year"].unique())[-1]
-                latest = agg[agg["Academic Year"] == latest_year]
-                latest = latest.sort_values(metric_col, ascending=False)
-
-                # Rename columns for clearer axis labels
-                latest_display = latest.rename(
-                    columns={
-                        "Category": "Characteristic category (e.g. Yes/No/Don't know)",
-                        metric_col: "Value",
-                    }
-                )
-
-                st.caption(
-                    f"Latest academic year in filtered data: **{latest_year}** – "
-                    "values show the share or number of entrants in each response category."
-                )
-                st.bar_chart(
-                    data=latest_display.set_index("Characteristic category (e.g. Yes/No/Don't know)")["Value"],
-                    use_container_width=True,
-                )
-            else:
-                pivot = (
-                    agg.pivot(
-                        index="Academic Year",
-                        columns="Category",
-                        values=metric_col,
-                    )
-                    .sort_index()
-                )
-
-                pivot_display = pivot.copy()
-                pivot_display.index.name = "Academic Year"
-
-                st.caption(
-                    "Time series of the chosen metric by response category for the selected academic years."
-                )
-                st.line_chart(pivot_display, use_container_width=True)
-
-        with st.expander("Raw data preview"):
-            st.dataframe(df_f, use_container_width=True, height=300)
-
-# -------------------------------------------------------------------
-# TAB 2 – Count by Level of Qualification
-# -------------------------------------------------------------------
-with tab_level:
-    st.header("Count by Level of Qualification")
-
-    st.markdown(
-        """
-This tab shows entrants by **level of qualification** (for example, first degrees versus 
-other levels) over time.
-
-Typical use:
-
-- Assess how the mix of qualification levels has changed.
-- Compare first degrees to other routes in the most recent year.
-"""
-    )
-
-    df = dfs.get("Count by Level of Qualification")
-    if df is None:
-        st.error("Could not load **Count by Level of Qualification.xlsx**.")
-    else:
-        with st.expander("Filters", expanded=True):
-            col1, col2 = st.columns(2)
-
-            level_vals = sorted(df["Level of qualification"].dropna().unique())
-            level_sel = col1.multiselect(
-                "Level of qualification",
-                options=level_vals,
-                default=[lv for lv in level_vals if lv != "Total"] or level_vals,
-                key="level_level_qual",
-            )
-
-            year_vals = sorted(df["Academic year"].dropna().unique())
-            years = col2.multiselect(
-                "Academic year",
-                options=year_vals,
-                default=year_vals,
-                key="level_academic_year",
-            )
-
-        df_f = df.copy()
-        df_f = multiselect_filter(df_f, "Level of qualification", level_sel)
-        if years:
-            df_f = df_f[df_f["Academic year"].isin(years)]
-
-        if df_f.empty:
-            st.warning("No data after filters – adjust filters to see charts.")
-        else:
-            st.markdown("### Time series of entrants by level of qualification")
-
-            pivot = (
-                df_f.pivot(
-                    index="Academic year",
-                    columns="Level of qualification",
-                    values="Number",
-                )
-                .sort_index()
-            )
-            pivot.index.name = "Academic year"
-
+            grouped["att8"] = grouped["attainment8_sum"] / grouped["pupil_count"]
+            pivot = grouped.pivot(index="idaci_decile", columns="year", values="att8")
+            order = [
+                "0-10%",
+                "10-20%",
+                "20-30%",
+                "30-40%",
+                "40-50%",
+                "50-60%",
+                "60-70%",
+                "70-80%",
+                "80-90%",
+                "90-100%",
+            ]
+            pivot = pivot.reindex(order)
             st.line_chart(pivot, use_container_width=True)
+            st.caption("Aggregated at IDACI-band level; no individual schools are shown.")
 
-            st.markdown("### Composition by level (latest year)")
+    with top_right:
+        st.markdown("##### Attainment 8 by Ofsted rating")
+        st.caption(
+            "Attainment 8 summary by Ofsted rating. Ratings are proxied using the "
+            "‘Previous overall effectiveness’ field from the management information file."
+        )
 
-            latest_year = sorted(df_f["Academic year"].unique())[-1]
-            latest = df_f[df_f["Academic year"] == latest_year]
-            latest = latest.groupby("Level of qualification", as_index=False)["Number"].sum()
-            latest = latest.sort_values("Number", ascending=False)
+        ofsted_f = filter_ks4_ofsted()
+        ofsted_f = ofsted_f.dropna(subset=["ofsted_rating", "avg_att8"]).copy()
+        ofsted_f["avg_att8"] = pd.to_numeric(ofsted_f["avg_att8"], errors="coerce")
 
-            latest_display = latest.rename(
-                columns={
-                    "Level of qualification": "Level of qualification",
-                    "Number": "Number of entrants",
-                }
+        if ofsted_f.empty:
+            st.info("No matched KS4–Ofsted data for the selected filters.")
+        else:
+            rating_means = (
+                ofsted_f.groupby("ofsted_rating", as_index=False)["avg_att8"]
+                .mean()
+                .sort_values("avg_att8", ascending=False)
             )
-
+            rating_means = rating_means.set_index("ofsted_rating")
+            st.bar_chart(rating_means["avg_att8"], use_container_width=True)
             st.caption(
-                f"Latest academic year in filtered data: **{latest_year}** – "
-                "showing the distribution of entrants by qualification level."
-            )
-            st.bar_chart(
-                data=latest_display.set_index("Level of qualification")["Number of entrants"],
-                use_container_width=True,
+                "In a fuller implementation, this would be a box plot showing the distribution "
+                "of Attainment 8 for schools in each Ofsted grade."
             )
 
-        with st.expander("Raw data preview"):
-            st.dataframe(df_f, use_container_width=True, height=300)
+    bottom_left, bottom_right = st.columns(2)
 
-# -------------------------------------------------------------------
-# TAB 3 – HECoS Subject Data
-# -------------------------------------------------------------------
-with tab_hecos:
-    st.header("HECoS / CAH subject data")
-
-    st.markdown(
-        """
-This tab focuses on **subject areas** using the **Higher Education Classification of Subjects (HECoS)** 
-and the **Common Aggregation Hierarchy (CAH)**:
-
-- **HECoS**: detailed subject codes used by higher education providers (replacing JACS).
-- **CAH**: groups HECoS codes into broader subject families (e.g. ‘Computing’, ‘Business’, ‘Psychology’).
-
-In the charts we show **subject names** (CAH level subjects) rather than numeric codes to keep labels readable.
-"""
-    )
-
-    df = dfs.get("HECoS Data")
-    if df is None:
-        st.error("Could not load **HECoS Data.xlsx**.")
-    else:
-        with st.expander("Filters", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            col4, col5 = st.columns(2)
-
-            cah_marker_vals = sorted(df["CAH level marker"].dropna().unique())
-            cah_marker = col1.multiselect(
-                "CAH level marker",
-                options=cah_marker_vals,
-                default=cah_marker_vals,
-                key="hecos_cah_marker",
-                help="Choose the CAH level (e.g. CAH1 / CAH2 / CAH3) for aggregation.",
-            )
-
-            entrant_vals = sorted(df["Entrant marker"].dropna().unique())
-            entrant_marker = col2.multiselect(
-                "Entrant marker",
-                options=entrant_vals,
-                default=["Entrant", "All"] if "Entrant" in entrant_vals else entrant_vals,
-                key="hecos_entrant_marker",
-                help="‘Entrant’ usually refers to new entrants in that academic year.",
-            )
-
-            level_vals = sorted(df["Level of study"].dropna().unique())
-            level_of_study = col3.multiselect(
-                "Level of study",
-                options=level_vals,
-                default=[lv for lv in level_vals if lv in ["All", "First degree"]] or level_vals,
-                key="hecos_level_study",
-            )
-
-            mode_vals = sorted(df["Mode of study"].dropna().unique())
-            mode_of_study = col4.multiselect(
-                "Mode of study",
-                options=mode_vals,
-                default=[mv for mv in mode_vals if mv in ["All", "Full-time"]] or mode_vals,
-                key="hecos_mode_study",
-            )
-
-            year_vals = sorted(df["Academic Year"].dropna().unique())
-            years = col5.multiselect(
-                "Academic Year",
-                options=year_vals,
-                default=year_vals,
-                key="hecos_academic_year",
-            )
-
-        df_f = df.copy()
-        df_f = multiselect_filter(df_f, "CAH level marker", cah_marker)
-        df_f = multiselect_filter(df_f, "Entrant marker", entrant_marker)
-        df_f = multiselect_filter(df_f, "Level of study", level_of_study)
-        df_f = multiselect_filter(df_f, "Mode of study", mode_of_study)
-        if years:
-            df_f = df_f[df_f["Academic Year"].isin(years)]
-
-        if df_f.empty:
-            st.warning("No data after filters – adjust filters to see charts.")
+    with bottom_left:
+        st.markdown("##### Regional and school-type differences")
+        st.caption(
+            "Average performance by region and establishment type "
+            "(for example, academies vs LA-maintained schools)."
+        )
+        geo_chart = geo_f.copy()
+        if geo_chart.empty:
+            st.info("No data for the selected filters.")
         else:
-            st.markdown("### Entrants by CAH subject (latest year)")
-
-            latest_year = sorted(df_f["Academic Year"].unique())[-1]
-            latest = df_f[df_f["Academic Year"] == latest_year]
-            latest = (
-                latest.groupby("CAH level subject", as_index=False)["Number"]
-                .sum()
-                .sort_values("Number", ascending=False)
-            )
-
-            latest_display = latest.rename(
-                columns={
-                    "CAH level subject": "Subject (CAH)",
-                    "Number": "Number of entrants",
-                }
-            )
-
-            st.caption(
-                f"Latest academic year in filtered data: **{latest_year}** – "
-                "showing the top subject groups by number of entrants."
-            )
-
-            top_n = st.slider(
-                "Top N subjects",
-                min_value=5,
-                max_value=40,
-                value=20,
-                key="hecos_top_n_subjects",
-            )
-            latest_top = latest_display.head(top_n)
-
-            st.bar_chart(
-                latest_top.set_index("Subject (CAH)")["Number of entrants"],
-                use_container_width=True,
-            )
-
-            st.markdown("### Trend for a selected subject over time")
-
-            subject_options = sorted(df_f["CAH level subject"].dropna().unique())
-            subject_sel = st.selectbox(
-                "Subject (CAH level)",
-                options=subject_options,
-                key="hecos_subject_select",
-            )
-
-            subj_ts = (
-                df_f[df_f["CAH level subject"] == subject_sel]
-                .groupby("Academic Year", as_index=False)["Number"]
-                .sum()
-                .sort_values("Academic Year")
-            )
-
-            subj_ts_display = subj_ts.rename(
-                columns={"Academic Year": "Academic Year", "Number": "Number of entrants"}
-            ).set_index("Academic Year")
-
-            st.line_chart(subj_ts_display["Number of entrants"], use_container_width=True)
-
-        with st.expander("Raw data preview"):
-            st.dataframe(df_f, use_container_width=True, height=300)
-
-# -------------------------------------------------------------------
-# TAB 4 – Custom visualisations (e.g. visualisations.csv)
-# -------------------------------------------------------------------
-with tab_custom:
-    st.header("Custom visualisations from another file")
-
-    st.markdown(
-        """
-Upload any **CSV** or **Excel** file (for example, your `visualisations.csv`
-that comes out of the regression script). Then choose the X/Y axes and chart type.
-
-This is designed to link the **regression outputs** from the school performance analysis 
-to a simple visual layer – for example, plotting contextual residuals or disadvantage gaps.
-"""
-    )
-
-    uploaded = st.file_uploader(
-        "Upload CSV or Excel",
-        type=["csv", "xlsx", "xls"],
-        accept_multiple_files=False,
-        key="custom_file_uploader",
-    )
-
-    if uploaded is not None:
-        if uploaded.name.lower().endswith(".csv"):
-            df_custom = pd.read_csv(uploaded)
-        else:
-            df_custom = pd.read_excel(uploaded)
-
-        st.subheader("Data preview")
-        st.dataframe(df_custom.head(), use_container_width=True, height=250)
-
-        numeric_cols = df_custom.select_dtypes(include="number").columns.tolist()
-        all_cols = df_custom.columns.tolist()
-
-        if not numeric_cols:
-            st.warning("No numeric columns found – need at least one for Y-axis.")
-        else:
-            st.markdown("### Build a chart")
-
-            col1, col2, col3 = st.columns(3)
-            x_col = col1.selectbox(
-                "X-axis",
-                options=all_cols,
-                index=0,
-                key="custom_x_axis",
-            )
-            y_col = col2.selectbox(
-                "Y-axis (numeric)",
-                options=numeric_cols,
-                index=0,
-                key="custom_y_axis",
-            )
-            chart_type = col3.selectbox(
-                "Chart type",
-                options=["Bar", "Line", "Scatter"],
-                index=0,
-                key="custom_chart_type",
-            )
-
-            group = st.checkbox(
-                "Aggregate by X (sum of Y)",
-                value=True,
-                help="Useful for bar/line charts – e.g. total entrants by region or residual band.",
-                key="custom_group_checkbox",
-            )
-
-            df_plot = df_custom.copy()
-            if group:
-                df_plot = (
-                    df_plot.groupby(x_col, as_index=False)[y_col]
-                    .sum()
-                    .sort_values(x_col)
-                )
-
-            st.write("#### Chart")
-
-            if chart_type == "Bar":
-                st.bar_chart(
-                    df_plot.set_index(x_col)[y_col],
-                    use_container_width=True,
-                )
-            elif chart_type == "Line":
-                st.line_chart(
-                    df_plot.set_index(x_col)[y_col],
-                    use_container_width=True,
-                )
+            if primary_outcome == "Attainment 8":
+                num_col = "attainment8_sum"
             else:
-                import matplotlib.pyplot as plt
+                num_col = "progress8_sum"
 
-                fig, ax = plt.subplots()
-                ax.scatter(df_plot[x_col], df_plot[y_col])
-                ax.set_xlabel(x_col)
-                ax.set_ylabel(y_col)
-                ax.set_title(f"{y_col} vs {x_col}")
-                plt.xticks(rotation=45, ha="right")
-                st.pyplot(fig, use_container_width=True)
+            grouped = (
+                geo_chart.groupby(["region_name", "establishment_type_group"], as_index=False)[
+                    [num_col, "pupil_count"]
+                ].sum()
+            )
+            grouped["value"] = grouped[num_col] / grouped["pupil_count"]
+            pivot = grouped.pivot(
+                index="region_name", columns="establishment_type_group", values="value"
+            ).sort_index()
+            st.bar_chart(pivot, use_container_width=True)
+            st.caption(
+                "Designed to highlight broad patterns by region and school type, rather than produce league tables."
+            )
+
+    with bottom_right:
+        st.markdown("##### Contextual outliers (aggregated)")
+        st.caption(
+            "Illustrative summary of regions by Progress 8 relative to the England mean."
+        )
+
+        geo_all_state = geo_df[
+            (geo_df["geographic_level"] == "Regional")
+            & (geo_df["establishment_type_group"] == "All state-funded")
+        ].copy()
+        geo_all_state["year"] = geo_all_state["time_period"].apply(closing_year)
+        if selected_years:
+            geo_all_state = geo_all_state[geo_all_state["year"].isin(selected_years)]
+        if selected_regions and "All regions" not in selected_regions:
+            geo_all_state = geo_all_state[geo_all_state["region_name"].isin(selected_regions)]
+
+        if geo_all_state.empty:
+            st.info("No data available to calculate contextual summaries.")
+        else:
+            geo_all_state["progress8_sum"] = pd.to_numeric(
+                geo_all_state["progress8_sum"], errors="coerce"
+            )
+            geo_all_state["progress8_pupil_count"] = pd.to_numeric(
+                geo_all_state["progress8_pupil_count"], errors="coerce"
+            )
+
+            region_stats = (
+                geo_all_state.groupby("region_name", as_index=False)[
+                    ["progress8_sum", "progress8_pupil_count"]
+                ]
+                .sum()
+            )
+            region_stats["p8"] = (
+                region_stats["progress8_sum"] / region_stats["progress8_pupil_count"]
+            )
+            england_mean = (
+                region_stats["progress8_sum"].sum()
+                / region_stats["progress8_pupil_count"].sum()
+            )
+
+            def band(p8):
+                if pd.isna(p8):
+                    return "No data"
+                diff = p8 - england_mean
+                if diff > 0.1:
+                    return "Above expected"
+                elif diff < -0.1:
+                    return "Below expected"
+                else:
+                    return "Around expected"
+
+            region_stats["Residual band"] = region_stats["p8"].apply(band)
+            region_stats["Region"] = region_stats["region_name"]
+            region_stats["LA group"] = "All local authorities"
+            region_stats["School type mix"] = "All state-funded"
+
+            table = region_stats[["Region", "LA group", "School type mix", "Residual band"]]
+            st.dataframe(table, use_container_width=True, height=260)
+            st.caption(
+                "In a full regression-based implementation, residual bands would be derived from "
+                "school-level value-added models and aggregated at LA/region level to avoid naming "
+                "or shaming individual schools."
+            )
+
+# =========================================================
+# SOCIOECONOMIC PATTERNS TAB
+# =========================================================
+
+with tab_socio:
+    st.subheader("Socioeconomic patterns")
+
+    st.markdown(
+        "This tab explores how attainment and progress vary with measures of "
+        "socioeconomic context, such as IDACI bands and FSM rates."
+    )
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("##### Attainment 8 vs IDACI band")
+        rur_chart = filter_rurality()
+        rur_chart = rur_chart[
+            rur_chart["idaci_decile"].isin(
+                [
+                    "0-10%",
+                    "10-20%",
+                    "20-30%",
+                    "30-40%",
+                    "40-50%",
+                    "50-60%",
+                    "60-70%",
+                    "70-80%",
+                    "80-90%",
+                    "90-100%",
+                ]
+            )
+        ]
+        if rur_chart.empty:
+            st.info("No data for the selected filters.")
+        else:
+            grouped = (
+                rur_chart.groupby(["idaci_decile"], as_index=False)[
+                    ["attainment8_sum", "pupil_count"]
+                ].sum()
+            )
+            grouped["att8"] = grouped["attainment8_sum"] / grouped["pupil_count"]
+            grouped = grouped.sort_values("att8")
+            grouped = grouped.set_index("idaci_decile")
+            st.bar_chart(grouped["att8"], use_container_width=True)
+            st.caption(
+                "Lower IDACI bands (0–10%, 10–20%) correspond to more deprived areas; "
+                "this illustrates the deprivation gradient in Attainment 8."
+            )
+
+    with col_b:
+        st.markdown("##### Progress 8 vs IDACI band")
+        if rur_chart.empty:
+            st.info("No data for the selected filters.")
+        else:
+            grouped = (
+                rur_chart.groupby(["idaci_decile"], as_index=False)[
+                    ["progress8_sum", "progress8_pupil_count"]
+                ].sum()
+            )
+            grouped["p8"] = grouped["progress8_sum"] / grouped["progress8_pupil_count"]
+            grouped = grouped.set_index("idaci_decile")
+            st.bar_chart(grouped["p8"], use_container_width=True)
+            st.caption(
+                "Progress 8 is already context-adjusted for prior attainment; "
+                "this view checks whether substantial gradients remain by IDACI band."
+            )
+
+# =========================================================
+# OFSTED & GOVERNANCE TAB
+# =========================================================
+
+with tab_ofsted:
+    st.subheader("Ofsted & governance")
+
+    st.markdown(
+        "This tab focuses on how performance relates to inspection outcomes and, "
+        "optionally, school type or governance arrangements."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("##### Attainment 8 by Ofsted rating (mean)")
+        ofsted_f = filter_ks4_ofsted()
+        ofsted_f = ofsted_f.dropna(subset=["ofsted_rating", "avg_att8"]).copy()
+        ofsted_f["avg_att8"] = pd.to_numeric(ofsted_f["avg_att8"], errors="coerce")
+
+        if ofsted_f.empty:
+            st.info("No matched KS4–Ofsted data for the selected filters.")
+        else:
+            rating_means = (
+                ofsted_f.groupby("ofsted_rating", as_index=False)["avg_att8"]
+                .mean()
+                .sort_values("avg_att8", ascending=False)
+            )
+            rating_means = rating_means.set_index("ofsted_rating")
+            st.bar_chart(rating_means["avg_att8"], use_container_width=True)
+            st.caption(
+                "In a fuller implementation, this could be a box plot showing the spread of Attainment 8 "
+                "for schools with each Ofsted grade."
+            )
+
+    with col2:
+        st.markdown("##### Progress 8 by Ofsted rating (mean)")
+        ofsted_f = filter_ks4_ofsted()
+        ofsted_f = ofsted_f.dropna(subset=["ofsted_rating", "avg_p8score"]).copy()
+        ofsted_f["avg_p8score"] = pd.to_numeric(ofsted_f["avg_p8score"], errors="coerce")
+
+        if ofsted_f.empty:
+            st.info("No matched KS4–Ofsted data for the selected filters.")
+        else:
+            rating_means = (
+                ofsted_f.groupby("ofsted_rating", as_index=False)["avg_p8score"]
+                .mean()
+                .sort_values("avg_p8score", ascending=False)
+            )
+            rating_means = rating_means.set_index("ofsted_rating")
+            st.bar_chart(rating_means["avg_p8score"], use_container_width=True)
+            st.caption(
+                "This aligns with the thesis question of whether inspection grades "
+                "match context-adjusted performance (Progress 8)."
+            )
+
+# =========================================================
+# DISADVANTAGE GAP TAB
+# =========================================================
+
+with tab_gap:
+    st.subheader("Disadvantage gap (illustrative)")
+
+    st.markdown(
+        "In the full project, this tab will use DfE 'disadvantage gap index' and/or "
+        "FSM vs non-FSM performance breakdowns. Here we show a simple proxy view based on "
+        "FSM eligibility rates over time."
+    )
+
+    if fsm_f.empty:
+        st.info("No FSM data for the selected filters.")
     else:
-        st.info("Upload a CSV/Excel file to start building custom visualisations.")
+        gap_df = fsm_f.groupby("year", as_index=False)["percent_of_pupils"].median()
+        gap_df = gap_df.set_index("year")
+        st.line_chart(gap_df["percent_of_pupils"], use_container_width=True)
+        st.caption(
+            "Median FSM eligibility rate for state-funded secondary schools over time. "
+            "In the final version, this would be complemented with attainment gaps between FSM and non-FSM pupils."
+        )
+
+# =========================================================
+# CONTEXTUAL OUTLIERS TAB
+# =========================================================
+
+with tab_outliers:
+    st.subheader("Contextual outliers")
+
+    st.markdown(
+        "This tab is intended to surface **regions or LA groupings that perform better or worse than expected** "
+        "once socioeconomic context is taken into account. The proxy table on the **Overview** tab already "
+        "summarises region-level Progress 8 relative to the England mean. "
+        "In the fully specified model, you would use regression residuals aggregated to LA/region level."
+    )
