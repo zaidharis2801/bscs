@@ -476,6 +476,45 @@ with tab_overview:
         st.caption("Share of schools located in the most deprived IDACI bands (0–30%).")
 
     st.markdown("")
+st.markdown("##### Driver chart: Primary outcome split by selected dimension")
+st.caption(
+    "This chart is controlled by **Chart controls** in the sidebar: "
+    "**Primary outcome** determines the metric; **Split by** determines the grouping."
+)
+
+# Choose dataset + grouping field based on split_by
+if split_by == "IMD / IDACI band":
+    df_driver = filter_rurality().copy()
+    df_driver = df_driver[df_driver["idaci_decile"].isin(idaci_bands_all[1:])]
+
+    group_col = "idaci_decile"
+    num_col = "attainment8_sum" if primary_outcome == "Attainment 8" else "progress8_sum"
+    den_col = "pupil_count" if primary_outcome == "Attainment 8" else "progress8_pupil_count"
+
+elif split_by == "Region":
+    df_driver = geo_df[geo_df["geographic_level"] == "Regional"].copy()
+    if selected_years:
+        df_driver = df_driver[df_driver["year"].isin(selected_years)]
+    if selected_regions and "All regions" not in selected_regions:
+        df_driver = df_driver[df_driver["region_name"].isin(selected_regions)]
+
+    group_col = "region_name"
+    num_col = "attainment8_sum" if primary_outcome == "Attainment 8" else "progress8_sum"
+    den_col = "pupil_count" if primary_outcome == "Attainment 8" else "progress8_pupil_count"
+
+else:  # School type
+    df_driver = filter_geo_regional().copy()
+    group_col = "establishment_type_group"
+    num_col = "attainment8_sum" if primary_outcome == "Attainment 8" else "progress8_sum"
+    den_col = "pupil_count" if primary_outcome == "Attainment 8" else "progress8_pupil_count"
+
+if df_driver.empty:
+    st.info("No data available for the selected filters.")
+else:
+    agg = df_driver.groupby(group_col, as_index=False)[[num_col, den_col]].sum()
+    agg["value"] = agg[num_col] / agg[den_col]
+    agg = agg.sort_values("value", ascending=False).set_index(group_col)
+    st.bar_chart(agg["value"], use_container_width=True)
 
     top_left, top_right = st.columns(2)
 
