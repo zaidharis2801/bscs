@@ -329,8 +329,8 @@ def filter_rurality():
     df = rurality_reg.copy()
     if selected_years:
         df = df[df["year"].isin(selected_years)]
-    if selected_regions and "All regions" not in selected_regions:
-    df = df[df["region_std"].isin(selected_regions)]
+        if selected_regions and "All regions" not in selected_regions:
+            df = df[df["region_std"].isin(selected_regions)]
     if selected_idaci_bands and "All bands" not in selected_idaci_bands:
         df = df[df["idaci_band"].isin(selected_idaci_bands)]
     return df
